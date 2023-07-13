@@ -1,9 +1,0 @@
-[submodule "libbpf"]
-	path = libbpf/libbpf
-	url = https://github.com/libbpf/libbpf.git
-[submodule "bpftool"]
-	path = libbpf/bpftool
-	url = https://github.com/libbpf/bpftool
-[submodule "blazesym"]
-	path = libbpf/blazesym
-	url = https://github.com/libbpf/blazesym.git
