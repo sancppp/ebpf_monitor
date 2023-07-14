@@ -28,7 +28,10 @@ services:
       - KAFKA_HEAP_OPTS=-Xmx512M -Xms256M
       # 不允许自动创建主题
       - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=false
-
+      # message存活时间
+      - KAFKA_CFG_LOG_RETENTION_HOURS=1
+      # 存储上限
+      - KAFKA_CFG_LOG_RETENTION_BYTES=268435456
       ### broker配置
       # 定义外网访问地址（宿主机ip地址和端口）
       - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://10.211.55.20:9192
@@ -38,3 +41,16 @@ services:
       - /home/mycontainers/kafka1/kafka/kraft:/bitnami/kafka
     env_file:
       - .env
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: always
+    ports:
+      - 8081:8080
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      # 集群名称
+      - KAFKA_CLUSTERS_0_NAME=local
+      # 集群地址
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092

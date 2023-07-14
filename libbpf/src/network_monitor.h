@@ -6,8 +6,8 @@ struct socket_event {
 	__u32 len;
 	__u32 pkt_type; //if_packet.h #24L
 	__u32 ifindex;
-	__u16 family;
-	__u16 protocol; //ipv4 or ipv6
+	__u16 family; //ipv4 or ipv6
+	__u16 protocol;
 	__u32 ip_proto; //tcp or udp or icmp
 	__u32 saddr_v4;
 	__u32 daddr_v4;

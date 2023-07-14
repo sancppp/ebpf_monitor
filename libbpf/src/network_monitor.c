@@ -56,55 +56,78 @@ static void sig_handler(int sig)
 static char *struct2json(void *data)
 {
 	const struct socket_event *d = data;
+	char saddr[INET6_ADDRSTRLEN] = {}, daddr[INET6_ADDRSTRLEN] = {};
+	char ifname[IF_NAMESIZE];
+	if (!if_indextoname(d->ifindex, ifname))
+		return NULL;
 	cJSON *root = cJSON_CreateObject();
-	//just test
+	if (d->family == AF_INET) {
+		inet_ntop(AF_INET, &d->saddr_v4, saddr, INET_ADDRSTRLEN);
+		inet_ntop(AF_INET, &d->daddr_v4, daddr, INET_ADDRSTRLEN);
+
+	} else if (d->family == AF_INET6) {
+		inet_ntop(AF_INET6, &d->saddr_v6, saddr, INET6_ADDRSTRLEN);
+		inet_ntop(AF_INET6, &d->daddr_v6, daddr, INET6_ADDRSTRLEN);
+	}
+	cJSON_AddNumberToObject(root, "timestamp", d->ts);
+	cJSON_AddStringToObject(root, "interface", ifname);
+	cJSON_AddStringToObject(root, "ip_proto", ipproto_mapping[d->ip_proto]);
 	cJSON_AddNumberToObject(root, "pkt_type", d->pkt_type);
 	cJSON_AddNumberToObject(root, "version", d->family);
+	cJSON_AddStringToObject(root, "saddr", saddr);
+	cJSON_AddNumberToObject(root, "saddr_port", ntohs(d->port16[0]));
+	cJSON_AddStringToObject(root, "daddr", daddr);
+	cJSON_AddNumberToObject(root, "daddr_port", ntohs(d->port16[1]));
+	cJSON_AddNumberToObject(root, "len", d->len);
 	char *json_str = cJSON_Print(root);
 	cJSON_Delete(root);
-	if (__debug)
-		printf("json string: %s\n", json_str);
 
 	return json_str;
 }
 
-static void kafka_produce(char *event_string)
+static void kafka_produce(const char *key, char *value)
 {
-	size_t len = strlen(event_string);
-	//进入队列
-	int err = rd_kafka_producev(
+	size_t key_len = strlen(key);
+	size_t value_len = strlen(value);
+	int err;
+
+retry:
+	err = rd_kafka_producev(
 		/* Producer handle */
 		producer,
 		/* Topic name */
 		RD_KAFKA_V_TOPIC(topic),
 		/* Make a copy of the payload. */
 		RD_KAFKA_V_MSGFLAGS(RD_KAFKA_MSG_F_COPY),
+		/* Message key and length */
+		RD_KAFKA_V_KEY(key, key_len),
 		/* Message value and length */
-		RD_KAFKA_V_VALUE(event_string, len),
+		RD_KAFKA_V_VALUE(value, value_len),
 		/* Per-Message opaque, provided in
                      * delivery report callback as
                      * msg_opaque. */
 		RD_KAFKA_V_OPAQUE(NULL),
 		/* End sentinel */
 		RD_KAFKA_V_END);
-	printf("err = %d\n", err);
 
-	//刷新，真正的发送
-	rd_kafka_flush(producer, 10 * 1000 /* wait for max 10 seconds */);
+	if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+		rd_kafka_flush(producer, 10 * 1000 /* wait for max 10 seconds */);
+		printf("err = %d\n", err);
+		goto retry;
+	}
+
+	// rd_kafka_flush(producer, 10 * 1000 /* wait for max 10 seconds */);
 }
-static int handle_event(void *ctx, void *data, size_t data_sz)
+static int event_handler(void *ctx, void *data, size_t data_sz)
 {
 	const struct socket_event *d = data;
 	if (d->pkt_type != PACKET_HOST && d->pkt_type != PACKET_OUTGOING)
 		return 0;
 
-	char saddr[INET6_ADDRSTRLEN] = {}, daddr[INET6_ADDRSTRLEN] = {};
-	char ifname[IF_NAMESIZE];
-	if (!if_indextoname(d->ifindex, ifname))
-		return 0;
 	char *event_string = struct2json(data);
-	printf("json string: %s\n", event_string);
-	kafka_produce(event_string);
+	if (event_string == NULL)
+		return 0;
+	kafka_produce("network", event_string);
 	free(event_string);
 	// if (d->family == AF_INET) {
 	// 	inet_ntop(AF_INET, &d->saddr_v4, saddr, INET_ADDRSTRLEN);
@@ -229,7 +252,7 @@ int main(int argc, char **argv)
 	}
 	printf("load success.\n");
 	/* Set up ring buffer polling */
-	rb = ring_buffer__new(bpf_map__fd(skel->maps.ringbuf), handle_event, NULL, NULL);
+	rb = ring_buffer__new(bpf_map__fd(skel->maps.ringbuf), event_handler, NULL, NULL);
 	if (!rb) {
 		err = -1;
 		fprintf(stderr, "Failed to create ring buffer\n");
@@ -267,6 +290,8 @@ int main(int argc, char **argv)
 cleanup:
 	ring_buffer__free(rb);
 	network_monitor_bpf__destroy(skel);
+	rd_kafka_flush(producer, 1 * 1000 /* wait for max 10 seconds */);
 	rd_kafka_destroy(producer);
+
 	return 0;
 }
